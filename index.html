@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<!--
+  ============================================================
+  ✨ 3D 粒子圣诞树 · 粒子告白 ✨
+  纯静态站点，无构建工具，部署到任意静态托管即可。
+  依赖：assets/three.min.js（本地）、assets/music.mp3（本地）。
+
+  【如何修改祝福文字】
+  打开 js/main.js，找到顶部 LOVE_TEXT_LINE1 / LOVE_TEXT_LINE2 /
+  LOVE_TEXT_FULL 常量，改成你想要的文字（英文效果最佳）。
+  文字只会作为离屏采样模板生成粒子坐标，绝不会以可见文字渲染。
+
+  【如何修改音乐】
+  直接替换 assets/music.mp3（保持文件名），建议使用无缝循环的
+  mp3（128kbps、30 秒以内最省流量）。音频在用户第一次点击屏幕
+  后开始播放并循环。
+
+  【如何调整动画与粒子】
+  js/main.js 顶部 CONFIG 对象：
+  - particleCount 系列：粒子总数（手机自动降档）
+  - morphK / morphHoldMax：变形速度与延迟
+  - cameraZ：各阶段相机距离
+  - treeRotSpeed：圣诞树自转速度
+  - PALETTE：全部配色（文字/爱心/树/装饰颜色都在这）
+  ============================================================
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#060b22">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎄</text></svg>">
+  <meta name="description" content="A little Christmas gift, made of light.">
+  <meta property="og:title" content="Merry Christmas ✨">
+  <meta property="og:description" content="A little Christmas gift, made of light.">
+  <meta property="og:type" content="website">
+  <title>Merry Christmas ✨</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <!-- 操作提示层：仅用于引导点击，不含任何祝福内容 -->
+  <div id="hint" class="hint">✨ 点击开启 ✨</div>
+  <div id="hint2" class="hint hidden">再点一下，送出祝福 ✨</div>
+
+  <!-- 背景音乐：用户第一次点击后播放，循环 -->
+  <audio id="bgm" src="assets/music.mp3" loop preload="auto" playsinline></audio>
+
+  <script src="assets/three.min.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
