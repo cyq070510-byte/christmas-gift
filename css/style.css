@@ -26,33 +26,3 @@ html, body {
   display: block;
 }
 
-.hint {
-  position: absolute;
-  left: 50%;
-  bottom: 14%;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 17px;
-  letter-spacing: 2px;
-  pointer-events: none;
-  text-align: center;
-  white-space: nowrap;
-  animation: breathe 2.2s ease-in-out infinite;
-  text-shadow: 0 0 12px rgba(110, 220, 255, 0.85);
-  transition: opacity 0.8s ease;
-  z-index: 10;
-}
-
-.hint.hidden {
-  opacity: 0;
-  animation: none;
-}
-
-@keyframes breathe {
-  0%, 100% { opacity: 0.45; transform: translateX(-50%) scale(0.98); }
-  50% { opacity: 1; transform: translateX(-50%) scale(1.03); }
-}
-
-@media (min-width: 768px) {
-  .hint { font-size: 20px; }
-}
