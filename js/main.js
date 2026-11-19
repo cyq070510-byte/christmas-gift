@@ -113,6 +113,9 @@ const holdPos = new Float32Array(N_STAGE * 3);
 const holdUntil = new Float32Array(N_STAGE);
 const heartOff = new Float32Array(N_STAGE * 3);
 const dustSeed = new Float32Array(N_STAGE * 3);
+const tgtPosStars = new Float32Array(N_STAGE * 3);   // 星空阶段的粒子目标（初始散点）
+const tgtColStars = new Float32Array(N_STAGE * 3);
+const sizeStars = new Float32Array(N_STAGE);
 
 let tgtPosTree = null, tgtColTree = null, tgtPosText = null, tgtColText = null,
     tgtPosHeart = null, tgtColHeart = null;
@@ -637,6 +640,61 @@ const starPoints = new THREE.Points(starGeo, mat);
 starPoints.frustumCulled = false;
 scene.add(starPoints);
 
+/* ---------- 最终转场特效：环绕构图的星尘层 ---------- */
+const SPARKLE_N = 460;
+let sparkleMat = null, sparklePoints = null;
+let sparkleTargetAlpha = 0, sparkleAlpha = 0, heartFormedAt = -1, burstT0 = -1;
+let sparkleBasePos = null, sparkleSizeArr = null;
+
+function buildSparkles() {
+  const p = new Float32Array(SPARKLE_N * 3);
+  const c = new Float32Array(SPARKLE_N * 3);
+  const sz = new Float32Array(SPARKLE_N);
+  const ph = new Float32Array(SPARKLE_N);
+  const sp = new Float32Array(SPARKLE_N);
+  for (let i = 0; i < SPARKLE_N; i++) {
+    const ang = Math.random() * Math.PI * 2;
+    const r = 2.0 + Math.pow(Math.random(), 0.75) * 3.4;         // 环绕构图
+    p[i * 3] = Math.cos(ang) * r;
+    p[i * 3 + 1] = 0.4 + Math.sin(ang) * r * 0.95;
+    p[i * 3 + 2] = (Math.random() - 0.5) * 2.6;
+    const warm = Math.random() < 0.3;
+    const cc = warm ? PALETTE.heartEdge : PALETTE.iceBlue;
+    const dim = 0.45 + Math.random() * 0.55;
+    c[i * 3] = cc[0] * dim; c[i * 3 + 1] = cc[1] * dim; c[i * 3 + 2] = cc[2] * dim;
+    sz[i] = 0.03 + Math.random() * 0.05;
+    ph[i] = Math.random() * Math.PI * 2;
+    sp[i] = 0.5 + Math.random() * 1.4;
+  }
+  const geo2 = new THREE.BufferGeometry();
+  geo2.setAttribute('position', new THREE.BufferAttribute(p, 3));
+  geo2.setAttribute('aColor', new THREE.BufferAttribute(c, 3));
+  geo2.setAttribute('aSize', new THREE.BufferAttribute(sz, 1));
+  geo2.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1));
+  geo2.setAttribute('aSpeed', new THREE.BufferAttribute(sp, 1));
+  sparkleMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uProjScale: { value: mat.uniforms.uProjScale.value },
+      uMaxPx: { value: 18 },
+      uOpacity: { value: 0 },
+    },
+    vertexShader: mat.vertexShader,
+    fragmentShader: mat.fragmentShader,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    depthTest: false,
+    transparent: true,
+  });
+  sparklePoints = new THREE.Points(geo2, sparkleMat);
+  sparklePoints.frustumCulled = false;
+  scene.add(sparklePoints);
+  sparkleBasePos = p;
+  sparkleSizeArr = sz;
+}
+
+buildSparkles();
+
 /* ---------- 初始：星空分布 ---------- */
 function scatterStage() {
   for (let i = 0; i < N_STAGE; i++) {
@@ -654,6 +712,10 @@ function scatterStage() {
     twPhase[i] = Math.random() * Math.PI * 2;
     twSpeed[i] = rnd(0.3, 1.2);
   }
+  // 记录星空阶段的粒子目标（供「回到星空」转场使用）
+  tgtPosStars.set(pos);
+  tgtColStars.set(col);
+  sizeStars.set(size);
 }
 scatterStage();
 
@@ -672,7 +734,8 @@ let sizeHeart = love.sH;
 
 function applyStageSizes(phaseName) {
   for (let i = 0; i < N_STAGE; i++) {
-    if (phaseName === 'tree') size[i] = sizeTree[i] || 0.07;
+    if (phaseName === 'stars') size[i] = sizeStars[i] || 0.08;
+    else if (phaseName === 'tree') size[i] = sizeTree[i] || 0.07;
     else if (phaseName === 'text') size[i] = sizeText[i] || 0.06;
     else if (phaseName === 'heart') size[i] = sizeHeart[i] || 0.07;
   }
@@ -689,17 +752,30 @@ let pulseBoost = 0;
 let camZ = CONFIG.cameraZ.stars;
 let camZTarget = CONFIG.cameraZ.stars;
 let lookY = 3.4, lookYTarget = 3.4;
-let autoTimer = 0;            // 文字阶段自动转爱心的倒计时
+let morphSpeedTarget = 4.5;   // 变形跟随速度目标（最后一次转场会放慢）
+let morphSpeedCur = 4.5;      // 当前变形速度（平滑过渡）
 let heartPulseT = -10;
 
 function transition(to) {
   const now = performance.now() / 1000;
+  // 最后一次转场（文字 → 文字+爱心）：粒子按「离构图中心的距离」排序出发，
+  // 形成由内向外扩散的波浪；跟随速度放慢，整体更丝滑
+  const smooth = (to === 'heart');
   for (let i = 0; i < N_STAGE; i++) {
-    holdUntil[i] = now + Math.random() * CONFIG.morphDelayMax;
+    if (smooth) {
+      const dx = pos[i * 3], dy = pos[i * 3 + 1] - heartCenterY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      holdUntil[i] = now + Math.min(0.9, (dist / 9) * 0.62) + Math.random() * 0.18;
+    } else {
+      holdUntil[i] = now + Math.random() * CONFIG.morphDelayMax;
+    }
     holdPos[i * 3] = pos[i * 3];
     holdPos[i * 3 + 1] = pos[i * 3 + 1];
     holdPos[i * 3 + 2] = pos[i * 3 + 2];
   }
+  morphSpeedTarget = smooth ? 2.5 : CONFIG.morphRingSpeed;
+  sparkleTargetAlpha = smooth ? 1 : 0;
+  if (smooth) heartFormedAt = now + 2.4;
   phase = to;
   if (to === 'tree') {
     camZTarget = CONFIG.cameraZ.tree;
@@ -707,7 +783,6 @@ function transition(to) {
   } else if (to === 'text') {
     camZTarget = CONFIG.cameraZ.text;
     lookYTarget = 0.2;
-    autoTimer = 3.4;           // 停留 3.4 秒后自动汇聚成爱心
   } else if (to === 'heart') {
     camZTarget = CONFIG.cameraZ.heart;
     lookYTarget = 0;
@@ -733,22 +808,17 @@ function onTap() {
   if (nowMs - lastTapMs < 450) return;
   lastTapMs = nowMs;
 
+  // 一次点击 = 一次转场：星空 → 圣诞树 → 两行文字 → 文字+爱心 → 回到星空 …
   if (phase === 'stars') {
     startMusic();
-    if (hint1) hint1.classList.add('hidden');
     transition('tree');
-    setTimeout(() => {
-      if (phase === 'tree' && hint2) hint2.classList.remove('hidden');
-    }, 1800);
   } else if (phase === 'tree') {
-    if (hint2) hint2.classList.add('hidden');
     transition('text');
+  } else if (phase === 'text') {
+    transition('heart');
   } else if (phase === 'heart') {
-    // 克制的爱心脉冲，不再让粒子爆炸散开
-    pulseBoost = Math.min(0.10, pulseBoost + 0.07);
-    heartPulseT = performance.now() / 1000;
+    transition('stars');
   }
-  // text 阶段点击无操作（等待自动汇聚成爱心）
 }
 
 canvas.addEventListener('click', onTap);
@@ -771,6 +841,7 @@ function resize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   updateProjScale();
+  if (sparkleMat) sparkleMat.uniforms.uProjScale.value = mat.uniforms.uProjScale.value;
   if (Math.abs(camera.aspect - loveBuiltAspect) > 0.01) {
     const tr2 = buildTreeTargets();
     tgtPosTree = tr2.p; tgtColTree = tr2.c;
@@ -793,6 +864,7 @@ window.__siteDebug = {
   frames: () => __frames,
   counts: () => ({ TOTAL, N_STAGE, N_AMBIENT, N_STARFIELD, textN, heartN, aspect: +camera.aspect.toFixed(3), light: LIGHT, dpr: DPR }),
   glyph: () => __glyphStats,
+  fx: () => ({ sparkle: +sparkleAlpha.toFixed(2), sparkleTarget: +sparkleTargetAlpha.toFixed(2), morphSpeed: +morphSpeedCur.toFixed(2) }),
   treeText: () => __treeTextStats,
   // 字形笔画覆盖率：统计"笔画内部像素"中被粒子圆点覆盖的比例
   glyphCoverage: () => __glyphDbg.map(o => {
@@ -879,12 +951,6 @@ function animate() {
   __frames++;
   mat.uniforms.uTime.value = now;
 
-  // 文字 → 爱心：自动进行
-  if (phase === 'text') {
-    autoTimer -= dt;
-    if (autoTimer <= 0) transition('heart');
-  }
-
   // 相机：缓慢推拉 + 轻微摇摆（营造 3D 空间感，无跳变）
   camZ += (camZTarget - camZ) * (1 - Math.exp(-dt * 1.1));
   lookY += (lookYTarget - lookY) * (1 - Math.exp(-dt * 1.1));
@@ -906,8 +972,33 @@ function animate() {
   pulseBoost *= Math.exp(-dt * 2.2);
   const heartScale = 1 + pulseBoost + 0.02 * Math.sin(now * 1.6);
 
-  const k = 1 - Math.exp(-dt * CONFIG.morphRingSpeed);
+  // 变形速度平滑过渡（最后一次转场更慢更丝滑）
+  morphSpeedCur += (morphSpeedTarget - morphSpeedCur) * (1 - Math.exp(-dt * 2.2));
+  const k = 1 - Math.exp(-dt * morphSpeedCur);
   const kc = 1 - Math.exp(-dt * 3.2);
+
+  // ---- 最终画面星尘特效 ----
+  if (sparklePoints) {
+    sparkleAlpha += (sparkleTargetAlpha - sparkleAlpha) * (1 - Math.exp(-dt * 1.9));
+    sparkleMat.uniforms.uOpacity.value = sparkleAlpha;
+    sparkleMat.uniforms.uTime.value = now;
+    sparkleMat.uniforms.uProjScale.value = mat.uniforms.uProjScale.value;
+    // 缓慢环绕 + 形成爱心瞬间的柔和绽放
+    sparklePoints.rotation.y = Math.sin(now * 0.12) * 0.25;
+    let burst = 0;
+    if (burstT0 > 0) {
+      const bt = now - burstT0;
+      if (bt > 0 && bt < 1.8) burst = Math.sin((bt / 1.8) * Math.PI);
+      else if (bt >= 1.8) burstT0 = -1;
+    }
+    const sc = 1 + burst * 0.32;
+    sparklePoints.scale.setScalar(sc);
+    // 微弱的呼吸闪烁
+    const breathe = 0.85 + 0.15 * Math.sin(now * 1.1);
+    sparkleMat.uniforms.uOpacity.value = sparkleAlpha * (0.75 + 0.35 * burst) * breathe;
+    // 爱心形成的瞬间触发一次绽放
+    if (heartFormedAt > 0 && now >= heartFormedAt) { burstT0 = now; heartFormedAt = -1; }
+  }
 
   for (let i = 0; i < N_STAGE; i++) {
     const i3 = i * 3;
